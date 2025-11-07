@@ -1,27 +1,23 @@
-# FROM node:lts-alpine
+## 1. build된 jar파일이 있는 경우
+#FROM eclipse-temurin:17-jre-alpine
+#WORKDIR /app
+#COPY build/libs/*.jar ./
+#RUN mv $(ls *.jar | grep -v plain) app.jar
+#ENTRYPOINT ["java", "-jar", "app.jar"]
 
-# ## curl(client-url) 설치
-# RUN apk add --no-cache curl
-
-# WORKDIR /app
-
-# COPY . .
-
-# RUN npm install
-
-# ## npm run dev --host 0.0.0.0
-# ## --host 0.0.0.0은 네트워크 인테페이스에서 접속을 허용(Docker 컨테이너 외부의 아무 IP에서나 접속 가능)
-# ## 중간에 이중 대쉬(--)는 npm 명령어와 구분하기 위한 구분자
-# CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
-
-FROM node:lts-alpine AS build-stage
+## 2. 자동 build 후 jar 파일로 실행되게 수정(멀티 스테이징)
+FROM gradle:8.5-jdk17-alpine AS build
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
 COPY . .
-RUN npm run build
-FROM nginx:stable-alpine AS production-stage
-COPY --from=build-stage /app/dist /usr/share/nginx/html
-COPY ./nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+
+## daemon 스레드를 쓰지 않음으로써 불필요한 리소스 낭비를 줄인다.
+## - gradle 이미지는 기본적으로 백그라운드에서 프로세스(데몬)을 실행
+## - 메모리에 JVM이나 빌드 정보를 캐싱
+## 다음 빌드 시 속도가 향상됨
+RUN gradle clean build --no-daemon -x test
+
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+COPY --from=build /app/build/libs/*.jar ./
+RUN mv $(ls *.jar | grep -v plain) app.jar
+ENTRYPOINT ["java", "-jar", "app.jar"]
